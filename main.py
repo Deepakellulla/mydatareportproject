@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pymongo import MongoClient
 
@@ -27,14 +28,12 @@ customers = db["customers"]
 async def start(client, message):
     user = message.from_user
 
-    # store user
     customers.update_one(
         {"user_id": user.id},
         {"$set": {"user_id": user.id, "name": user.first_name}},
         upsert=True
     )
 
-    # 🔥 if admin
     if user.id == OWNER_ID:
         await message.reply(
             "👑 Admin Panel Active\n\n"
@@ -47,11 +46,29 @@ async def start(client, message):
             "/broadcast"
         )
     else:
-        # normal user
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 Send ID to Admin", callback_data="send_id")]
+        ])
+
         await message.reply(
             "✅ You will receive subscription updates.\n\n"
-            f"Send this ID to admin:\n`{user.id}`"
+            "Click below to send your ID to admin 👇",
+            reply_markup=keyboard
         )
+
+# -------- SEND ID BUTTON --------
+@app.on_callback_query(filters.regex("send_id"))
+async def send_id(client, callback_query):
+    user = callback_query.from_user
+
+    await app.send_message(
+        OWNER_ID,
+        f"📥 New Customer\n\n"
+        f"👤 Name: {user.first_name}\n"
+        f"🆔 ID: {user.id}"
+    )
+
+    await callback_query.answer("✅ Sent to admin!", show_alert=True)
 
 # -------- ADD SALE --------
 @app.on_message(filters.command("addsale") & filters.user(OWNER_ID))
@@ -155,7 +172,7 @@ async def renew(client, message):
     except Exception as e:
         await message.reply(f"❌ {e}")
 
-# -------- BROADCAST (PRO) --------
+# -------- BROADCAST --------
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 async def broadcast(client, message):
     users = list(customers.find())
@@ -269,7 +286,6 @@ scheduler.add_job(check_expiry, "interval", hours=6)
 scheduler.add_job(daily, "cron", hour=23, minute=59)
 scheduler.add_job(weekly, "cron", day_of_week="sun", hour=21)
 scheduler.add_job(monthly, "cron", day=1, hour=10)
-
 
 @app.on_message(filters.command("start_scheduler") & filters.user(OWNER_ID))
 async def start_scheduler(client, message):
