@@ -255,7 +255,15 @@ scheduler.add_job(daily, "cron", hour=23, minute=59)
 scheduler.add_job(weekly, "cron", day_of_week="sun", hour=21)
 scheduler.add_job(monthly, "cron", day=1, hour=10)
 
-scheduler.start()
+
+@app.on_message(filters.command("start_scheduler") & filters.user(OWNER_ID))
+async def start_scheduler(client, message):
+    scheduler.start()
+    await message.reply("✅ Scheduler started")
+
+@app.on_message(filters.command("ping"))
+async def ping(_, msg):
+    await msg.reply("Bot running")
 
 # -------- RUN --------
 app.run()
