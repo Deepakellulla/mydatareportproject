@@ -35,40 +35,46 @@ async def start(client, message):
     )
 
     if user.id == OWNER_ID:
-        await message.reply(
-            "👑 Admin Panel Active\n\n"
-            "Commands:\n"
-            "/addsale\n"
-            "/active\n"
-            "/profit\n"
-            "/platform_stats\n"
-            "/renew USER_ID DAYS\n"
-            "/broadcast"
-        )
+        await message.reply("👑 Admin Panel Active")
     else:
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Send ID to Admin", callback_data="send_id")]
+            [InlineKeyboardButton("📤 Send ID to Admin", callback_data="send_id")],
+            [InlineKeyboardButton("📊 My Subscription", callback_data="my_plan")]
         ])
 
         await message.reply(
-            "✅ You will receive subscription updates.\n\n"
-            "Click below to send your ID to admin 👇",
+            "✅ You will receive subscription updates.",
             reply_markup=keyboard
         )
 
-# -------- SEND ID BUTTON --------
+# -------- SEND ID --------
 @app.on_callback_query(filters.regex("send_id"))
 async def send_id(client, callback_query):
     user = callback_query.from_user
 
     await app.send_message(
         OWNER_ID,
-        f"📥 New Customer\n\n"
-        f"👤 Name: {user.first_name}\n"
-        f"🆔 ID: {user.id}"
+        f"📥 New Customer\n\n👤 {user.first_name}\n🆔 {user.id}"
     )
 
-    await callback_query.answer("✅ Sent to admin!", show_alert=True)
+    await callback_query.answer("✅ Sent!")
+
+# -------- MY PLAN --------
+@app.on_callback_query(filters.regex("my_plan"))
+async def my_plan(client, callback_query):
+    user_id = callback_query.from_user.id
+
+    user_sale = sales.find_one(
+        {"user_id": user_id},
+        sort=[("expiry_date", -1)]
+    )
+
+    if not user_sale:
+        return await callback_query.answer("No active plan", show_alert=True)
+
+    await callback_query.message.reply(
+        f"📺 {user_sale['platform']}\n📅 Expiry: {user_sale['expiry_date'].date()}"
+    )
 
 # -------- ADD SALE --------
 @app.on_message(filters.command("addsale") & filters.user(OWNER_ID))
@@ -98,49 +104,10 @@ async def addsale(client, message):
             "status": "active"
         })
 
-        await message.reply(f"✅ Added\n👤 {name}\n📺 {platform}\n📅 {expiry.date()}")
+        await message.reply(f"✅ Added\n👤 {name}\n📺 {platform}")
 
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
-
-# -------- ACTIVE --------
-@app.on_message(filters.command("active") & filters.user(OWNER_ID))
-async def active(client, message):
-    rows = sales.find({"status": "active"})
-
-    text = "📺 Active:\n\n"
-    found = False
-
-    for r in rows:
-        found = True
-        text += f"{r['name']} | {r['platform']} | {r['expiry_date'].date()}\n"
-
-    if not found:
-        return await message.reply("No active subscriptions")
-
-    await message.reply(text)
-
-# -------- PROFIT --------
-@app.on_message(filters.command("profit") & filters.user(OWNER_ID))
-async def profit(client, message):
-    total = sum(x["profit"] for x in sales.find())
-    await message.reply(f"💰 Profit: ₹{total}")
-
-# -------- PLATFORM STATS --------
-@app.on_message(filters.command("platform_stats") & filters.user(OWNER_ID))
-async def platform_stats(client, message):
-    pipeline = [
-        {"$group": {"_id": "$platform", "profit": {"$sum": "$profit"}, "count": {"$sum": 1}}},
-        {"$sort": {"profit": -1}}
-    ]
-
-    res = list(sales.aggregate(pipeline))
-
-    text = "📊 Platform Stats\n\n"
-    for r in res:
-        text += f"{r['_id']} → ₹{r['profit']} ({r['count']})\n"
-
-    await message.reply(text)
 
 # -------- RENEW --------
 @app.on_message(filters.command("renew") & filters.user(OWNER_ID))
@@ -150,10 +117,10 @@ async def renew(client, message):
         user_id = int(parts[1])
         days = int(parts[2])
 
-        user_sale = sales.find_one({"user_id": user_id}, sort=[("expiry_date", -1)])
-
-        if not user_sale:
-            return await message.reply("User not found")
+        user_sale = sales.find_one(
+            {"user_id": user_id},
+            sort=[("expiry_date", -1)]
+        )
 
         new_expiry = datetime.now() + timedelta(days=days)
 
@@ -162,65 +129,21 @@ async def renew(client, message):
             {"$set": {"expiry_date": new_expiry, "status": "active"}}
         )
 
+        # ✅ Auto thank you
         try:
-            await app.send_message(user_id, f"✅ Renewed!\n📅 {new_expiry.date()}")
+            await app.send_message(
+                user_id,
+                f"✅ Renewed Successfully!\n📅 Expiry: {new_expiry.date()}\n\n❤️ Thank you for choosing us!"
+            )
         except:
             pass
 
-        await message.reply(f"✅ Renewed\n📅 {new_expiry.date()}")
+        await message.reply("✅ Renewed")
 
     except Exception as e:
         await message.reply(f"❌ {e}")
 
-# -------- BROADCAST --------
-@app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
-async def broadcast(client, message):
-    users = list(customers.find())
-
-    total = len(users)
-    success = 0
-    failed = 0
-    blocked = 0
-
-    status = await message.reply("📢 Broadcasting...")
-
-    for i, user in enumerate(users, start=1):
-        uid = user["user_id"]
-
-        try:
-            if message.reply_to_message:
-                await message.reply_to_message.forward(uid)
-            else:
-                text = message.text.split(" ", 1)[1]
-                await app.send_message(uid, text)
-
-            success += 1
-
-        except UserIsBlocked:
-            blocked += 1
-            customers.delete_one({"user_id": uid})
-
-        except InputUserDeactivated:
-            failed += 1
-            customers.delete_one({"user_id": uid})
-
-        except FloodWait as e:
-            await asyncio.sleep(e.value)
-            continue
-
-        except:
-            failed += 1
-
-        await asyncio.sleep(0.08)
-
-        if i % 50 == 0:
-            await status.edit(f"{i}/{total} done")
-
-    await status.edit(
-        f"📢 Done\n\nTotal: {total}\nSent: {success}\nBlocked: {blocked}\nFailed: {failed}"
-    )
-
-# -------- CUSTOMER REPLIES --------
+# -------- CUSTOMER REPLY FORWARD --------
 @app.on_message(filters.private & ~filters.user(OWNER_ID))
 async def reply_forward(client, message):
     if message.text and message.text.startswith("/"):
@@ -236,65 +159,41 @@ async def check_expiry():
 
             await app.send_message(OWNER_ID, f"⚠️ Expired: {r['name']}")
 
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 Renew Now", callback_data="renew_req")]
+            ])
+
             try:
                 await app.send_message(
                     r["user_id"],
-                    f"⚠️ Your {r['platform']} expired!\nReply YES to renew"
+                    f"⚠️ Your {r['platform']} expired!",
+                    reply_markup=keyboard
                 )
             except:
                 pass
 
             sales.update_one({"_id": r["_id"]}, {"$set": {"status": "expired"}})
 
-# -------- REPORTS --------
-def calc(start, end):
-    total = 0
-    count = 0
+# -------- RENEW REQUEST BUTTON --------
+@app.on_callback_query(filters.regex("renew_req"))
+async def renew_req(client, callback_query):
+    user = callback_query.from_user
 
-    for r in sales.find({"start_date": {"$gte": start, "$lt": end}}):
-        total += r["profit"]
-        count += 1
+    await app.send_message(
+        OWNER_ID,
+        f"🔥 Renewal Request\n👤 {user.first_name}\n🆔 {user.id}"
+    )
 
-    return total, count
-
-async def daily():
-    now = datetime.now()
-    start = datetime(now.year, now.month, now.day)
-    end = start + timedelta(days=1)
-
-    p, c = calc(start, end)
-    await app.send_message(OWNER_ID, f"📊 Daily\nSales: {c}\nProfit: ₹{p}")
-
-async def weekly():
-    now = datetime.now()
-    start = now - timedelta(days=7)
-
-    p, c = calc(start, now)
-    await app.send_message(OWNER_ID, f"📊 Weekly\nSales: {c}\nProfit: ₹{p}")
-
-async def monthly():
-    now = datetime.now()
-    start = datetime(now.year, now.month, 1)
-
-    p, c = calc(start, now)
-    await app.send_message(OWNER_ID, f"📊 Monthly\nSales: {c}\nProfit: ₹{p}")
+    await callback_query.answer("Admin will contact you!")
 
 # -------- SCHEDULER --------
 scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
-
 scheduler.add_job(check_expiry, "interval", hours=6)
-scheduler.add_job(daily, "cron", hour=23, minute=59)
-scheduler.add_job(weekly, "cron", day_of_week="sun", hour=21)
-scheduler.add_job(monthly, "cron", day=1, hour=10)
 
 @app.on_message(filters.command("start_scheduler") & filters.user(OWNER_ID))
 async def start_scheduler(client, message):
     scheduler.start()
-    await message.reply("✅ Scheduler started")
-
-@app.on_message(filters.command("ping"))
-async def ping(_, msg):
-    await msg.reply("Bot running")
+    await message.reply("Scheduler started")
 
 # -------- RUN --------
 app.run()
