@@ -27,16 +27,31 @@ customers = db["customers"]
 async def start(client, message):
     user = message.from_user
 
+    # store user
     customers.update_one(
         {"user_id": user.id},
         {"$set": {"user_id": user.id, "name": user.first_name}},
         upsert=True
     )
 
-    await message.reply(
-        "✅ You will receive updates.\nSend this ID to admin:\n"
-        f"`{user.id}`"
-    )
+    # 🔥 if admin
+    if user.id == OWNER_ID:
+        await message.reply(
+            "👑 Admin Panel Active\n\n"
+            "Commands:\n"
+            "/addsale\n"
+            "/active\n"
+            "/profit\n"
+            "/platform_stats\n"
+            "/renew USER_ID DAYS\n"
+            "/broadcast"
+        )
+    else:
+        # normal user
+        await message.reply(
+            "✅ You will receive subscription updates.\n\n"
+            f"Send this ID to admin:\n`{user.id}`"
+        )
 
 # -------- ADD SALE --------
 @app.on_message(filters.command("addsale") & filters.user(OWNER_ID))
